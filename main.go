@@ -393,7 +393,6 @@ func main() {
 				meta := ParseMeta(data)
 				addFLACTag(filename, meta)
 			case ".mp3":
-				var err error
 				data, err := extractFromMp3(filename)
 				if err != nil {
 					log.Println(err)
