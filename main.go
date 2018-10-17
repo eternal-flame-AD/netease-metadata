@@ -323,6 +323,7 @@ func addMP3Tag(fileName string, meta Meta) {
 
 type Meta struct {
 	Name    string
+	ID      int
 	Artist  []string
 	Album   string
 	Picture string
@@ -330,6 +331,7 @@ type Meta struct {
 
 func ParseMeta(meta map[string]interface{}) Meta {
 	res := Meta{}
+	res.ID = int(meta["musicId"].(float64))
 	if name, ok := meta["musicName"]; ok {
 		res.Name = name.(string)
 	}
