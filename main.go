@@ -55,7 +55,14 @@ func decode(meta []byte) ([]byte, error) {
 	return PKCS7UnPadding(res), nil
 }
 
-func extractFromFLAC(fn string) (map[string]interface{}, error) {
+func containPNGHeader(data []byte) bool {
+	if len(data) < 8 {
+		return false
+	}
+	return string(data[:8]) == string([]byte{137, 80, 78, 71, 13, 10, 26, 10})
+}
+
+func extractFromFLAC(fn string) (*MetaInfo, error) {
 	f, err := flac.ParseFile(fn)
 	if err != nil {
 		return nil, err
@@ -76,12 +83,11 @@ func extractFromFLAC(fn string) (map[string]interface{}, error) {
 					if err != nil {
 						return nil, err
 					}
-					dec := make(map[string]interface{})
-					err = json.Unmarshal(res[6:], &dec)
-					if err != nil {
+					info := new(MetaInfo)
+					if err := json.Unmarshal(res[6:], info); err != nil {
 						return nil, err
 					}
-					return dec, nil
+					return info, nil
 				}
 			}
 		}
@@ -89,7 +95,7 @@ func extractFromFLAC(fn string) (map[string]interface{}, error) {
 	return nil, errors.New("meta not found")
 }
 
-func extractFromMp3(fn string) (map[string]interface{}, error) {
+func extractFromMp3(fn string) (*MetaInfo, error) {
 	f, err := id3v2.Open(fn, id3v2.Options{Parse: true})
 	defer f.Close()
 	if err != nil {
@@ -103,12 +109,11 @@ func extractFromMp3(fn string) (map[string]interface{}, error) {
 				if err != nil {
 					return nil, err
 				}
-				dec := make(map[string]interface{})
-				err = json.Unmarshal(res[6:], &dec)
-				if err != nil {
+				info := new(MetaInfo)
+				if err := json.Unmarshal(res[6:], info); err != nil {
 					return nil, err
 				}
-				return dec, nil
+				return info, nil
 			}
 		}
 	}
@@ -130,10 +135,14 @@ func downloadPic(url string) ([]byte, string, error) {
 	if err != nil {
 		return []byte(url), "-->", err
 	}
-	return data, "image/jpeg", nil
+	mime := "image/jpeg"
+	if containPNGHeader(data) {
+		mime = "image/png"
+	}
+	return data, mime, nil
 }
 
-func addFLACTag(fileName string, meta Meta) {
+func addFLACTag(fileName string, meta *MetaInfo) {
 	f, err := flac.ParseFile(fileName)
 	changed := false
 	if err != nil {
@@ -146,10 +155,10 @@ func addFLACTag(fileName string, meta Meta) {
 				return
 			}
 		}
-		if meta.Picture == "" {
+		if meta.AlbumPic == "" {
 			return
 		}
-		if pic, mime, err := downloadPic(meta.Picture); err == nil {
+		if pic, mime, err := downloadPic(meta.AlbumPic); err == nil {
 			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "Front cover", pic, "image/jpeg")
 			if err == nil {
 				changed = true
@@ -196,7 +205,7 @@ func addFLACTag(fileName string, meta Meta) {
 		log.Println(err)
 		return
 	} else if len(titles) == 0 {
-		if name := meta.Name; name != "" {
+		if name := meta.MusicName; name != "" {
 			log.Println("Adding music name")
 			changed = true
 			cmts.Add(flacvorbis.FIELD_TITLE, name)
@@ -222,7 +231,7 @@ func addFLACTag(fileName string, meta Meta) {
 			log.Println("Adding artist")
 			for _, name := range artist {
 				changed = true
-				cmts.Add(flacvorbis.FIELD_ARTIST, name)
+				cmts.Add(flacvorbis.FIELD_ARTIST, name[0].(string))
 			}
 		}
 	}
@@ -238,7 +247,7 @@ func addFLACTag(fileName string, meta Meta) {
 	}
 }
 
-func addMP3Tag(fileName string, meta Meta) {
+func addMP3Tag(fileName string, meta *MetaInfo) {
 	tag, err := id3v2.Open(fileName, id3v2.Options{Parse: true})
 	changed := false
 	if err != nil {
@@ -248,7 +257,7 @@ func addMP3Tag(fileName string, meta Meta) {
 	defer tag.Close()
 
 	func() {
-		if meta.Picture == "" {
+		if meta.AlbumPic == "" {
 			return
 		}
 		for _, meta := range tag.AllFrames() {
@@ -258,7 +267,7 @@ func addMP3Tag(fileName string, meta Meta) {
 				}
 			}
 		}
-		if pic, mime, err := downloadPic(meta.Picture); err != nil {
+		if pic, mime, err := downloadPic(meta.AlbumPic); err != nil {
 			log.Println(err)
 			if mime == "-->" {
 				changed = true
@@ -287,10 +296,10 @@ func addMP3Tag(fileName string, meta Meta) {
 	}()
 
 	if tag.GetTextFrame("TIT2").Text == "" {
-		if meta.Name != "" {
+		if meta.MusicName != "" {
 			log.Println("Adding music name")
 			changed = true
-			tag.AddTextFrame("TIT2", id3v2.EncodingUTF8, meta.Name)
+			tag.AddTextFrame("TIT2", id3v2.EncodingUTF8, meta.MusicName)
 		}
 	}
 
@@ -307,7 +316,7 @@ func addMP3Tag(fileName string, meta Meta) {
 			log.Println("Adding artist")
 			for _, name := range meta.Artist {
 				changed = true
-				tag.AddTextFrame("TPE1", id3v2.EncodingUTF8, name)
+				tag.AddTextFrame("TPE1", id3v2.EncodingUTF8, name[0].(string))
 			}
 		}
 	}
@@ -321,33 +330,22 @@ func addMP3Tag(fileName string, meta Meta) {
 	}
 }
 
-type Meta struct {
-	Name    string
-	ID      int
-	Artist  []string
-	Album   string
-	Picture string
-}
-
-func ParseMeta(meta map[string]interface{}) Meta {
-	res := Meta{}
-	res.ID = int(meta["musicId"].(float64))
-	if name, ok := meta["musicName"]; ok {
-		res.Name = name.(string)
-	}
-	if album, ok := meta["album"]; ok {
-		res.Album = album.(string)
-	}
-	if artists, ok := meta["artist"]; ok {
-		res.Artist = make([]string, 0)
-		for _, artist := range artists.([]interface{}) {
-			res.Artist = append(res.Artist, artist.([]interface{})[0].(string))
-		}
-	}
-	if url, ok := meta["albumPic"]; ok {
-		res.Picture = url.(string)
-	}
-	return res
+// yoki123/ncmdump
+type MetaInfo struct {
+	MusicID       int             `json:"musicId"`
+	MusicName     string          `json:"musicName"`
+	Artist        [][]interface{} `json:"artist"` // [[string,int],]
+	AlbumID       int             `json:"albumId"`
+	Album         string          `json:"album"`
+	AlbumPicDocID interface{}     `json:"albumPicDocId"` // string or int
+	AlbumPic      string          `json:"albumPic"`
+	BitRate       int             `json:"bitrate"`
+	Mp3DocID      string          `json:"mp3DocId"`
+	Duration      int             `json:"duration"`
+	MvID          int             `json:"mvId"`
+	Alias         []string        `json:"alias"`
+	TransNames    []interface{}   `json:"transNames"`
+	Format        string          `json:"format"`
 }
 
 func main() {
@@ -392,16 +390,14 @@ func main() {
 					log.Println(err)
 					return
 				}
-				meta := ParseMeta(data)
-				addFLACTag(filename, meta)
+				addFLACTag(filename, data)
 			case ".mp3":
 				data, err := extractFromMp3(filename)
 				if err != nil {
 					log.Println(err)
 					return
 				}
-				meta := ParseMeta(data)
-				addMP3Tag(filename, meta)
+				addMP3Tag(filename, data)
 			}
 		})
 	}
