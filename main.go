@@ -159,7 +159,7 @@ func addFLACTag(fileName string, meta *MetaInfo) {
 			return
 		}
 		if pic, mime, err := downloadPic(meta.AlbumPic); err == nil {
-			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "Front cover", pic, "image/jpeg")
+			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "Front cover", pic, mime)
 			if err == nil {
 				changed = true
 				log.Println("Adding image")
