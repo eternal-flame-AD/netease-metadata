@@ -243,7 +243,9 @@ func addFLACTag(fileName string, meta *MetaInfo) {
 	}
 
 	if changed {
-		f.Save(fileName)
+		if err := f.Save(fileName); err != nil {
+			log.Println(err)
+		}
 	}
 }
 
