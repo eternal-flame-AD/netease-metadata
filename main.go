@@ -165,6 +165,8 @@ func addFLACTag(fileName string, meta *MetaInfo) {
 				log.Println("Adding image")
 				picturemeta := picture.Marshal()
 				f.Meta = append(f.Meta, &picturemeta)
+			} else {
+				log.Println(err)
 			}
 		} else {
 			log.Println(err)
